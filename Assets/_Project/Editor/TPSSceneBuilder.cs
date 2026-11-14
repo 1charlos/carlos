@@ -7,6 +7,7 @@ using UnityEngine.Rendering;
 using UnityEngine.UI;
 using TPSShooter.CameraSystem;
 using TPSShooter.Combat;
+using TPSShooter.Enemies;
 using TPSShooter.Player;
 using TPSShooter.UI;
 using TPSShooter.Weapons;
@@ -16,7 +17,8 @@ namespace TPSShooter.EditorTools
     /// <summary>
     /// Menú: Tools > TPS Shooter > Crear escena de prueba
     /// Genera materiales, el prefab del jugador (personaje + arma + cámara), el prefab del HUD
-    /// (incluye controles táctiles) y una escena de pruebas con dianas, cajas físicas y obstáculos.
+    /// (incluye controles táctiles), el prefab de enemigo y una escena de pruebas con bots,
+    /// dianas, cajas físicas y obstáculos.
     /// </summary>
     public static class TPSSceneBuilder
     {
@@ -29,7 +31,7 @@ namespace TPSShooter.EditorTools
 
         private class Mats
         {
-            public Material ground, wall, crate, target, player, visor, weapon, tracer, impact;
+            public Material ground, wall, crate, target, player, visor, weapon, tracer, impact, enemy, enemyTracer;
         }
 
         [MenuItem("Tools/TPS Shooter/Crear escena de prueba")]
@@ -47,11 +49,13 @@ namespace TPSShooter.EditorTools
             CreateLighting();
             CreateEnvironment(mats);
             GameObject rig = CreatePlayerRig(mats, out RaycastWeapon weapon);
-            GameObject hud = CreateHUD(weapon);
+            Transform playerTransform = rig.transform.Find("Player");
+            GameObject hud = CreateHUD(weapon, playerTransform.GetComponent<PlayerHealth>());
             CreateEventSystem();
 
             PrefabUtility.SaveAsPrefabAssetAndConnect(rig, PrefabsPath + "/TPS_PlayerRig.prefab", InteractionMode.AutomatedAction);
             PrefabUtility.SaveAsPrefabAssetAndConnect(hud, PrefabsPath + "/TPS_HUD.prefab", InteractionMode.AutomatedAction);
+            CreateEnemies(mats, playerTransform);
 
             EditorSceneManager.SaveScene(scene, ScenePath);
             AddSceneToBuildSettings(ScenePath);
@@ -77,6 +81,8 @@ namespace TPSShooter.EditorTools
                 weapon = GetOrCreateMat("M_Weapon", new Color(0.15f, 0.15f, 0.15f)),
                 impact = GetOrCreateMat("M_Impact", new Color(1f, 0.85f, 0.3f)),
                 tracer = GetOrCreateMat("M_Tracer", new Color(1f, 0.9f, 0.5f), unlit: true),
+                enemy = GetOrCreateMat("M_Enemy", new Color(0.55f, 0.2f, 0.65f)),
+                enemyTracer = GetOrCreateMat("M_EnemyTracer", new Color(1f, 0.3f, 0.25f), unlit: true),
             };
         }
 
@@ -204,6 +210,7 @@ namespace TPSShooter.EditorTools
 
             var input = player.AddComponent<PlayerInputHandler>();
             var controller = player.AddComponent<ThirdPersonController>();
+            player.AddComponent<PlayerHealth>();
 
             // Cuerpo visual (sin collider: el CharacterController ya colisiona)
             var body = Visual(PrimitiveType.Capsule, "Body", player.transform, new Vector3(0f, 0.9f, 0f), new Vector3(0.7f, 0.9f, 0.7f), m.player);
@@ -282,9 +289,83 @@ namespace TPSShooter.EditorTools
         }
 
         // ==================================================================
+        // Enemigos  (=> prefab TPS_Enemy)
+        // ==================================================================
+        private static void CreateEnemies(Mats m, Transform player)
+        {
+            var parent = new GameObject("Enemies").transform;
+            Vector3[] positions =
+            {
+                new Vector3(-12f, 0f, 22f), new Vector3(0f, 0f, 26f), new Vector3(14f, 0f, 20f),
+            };
+
+            GameObject first = CreateEnemy(m, player);
+            first.transform.SetParent(parent);
+            first.transform.SetPositionAndRotation(positions[0], Quaternion.Euler(0f, 180f, 0f));
+            GameObject prefab = PrefabUtility.SaveAsPrefabAssetAndConnect(first, PrefabsPath + "/TPS_Enemy.prefab", InteractionMode.AutomatedAction);
+
+            for (int i = 0; i < positions.Length; i++)
+            {
+                GameObject enemy = i == 0 ? first : (GameObject)PrefabUtility.InstantiatePrefab(prefab, parent);
+                enemy.name = $"Enemy_{i}";
+                enemy.transform.SetPositionAndRotation(positions[i], Quaternion.Euler(0f, 180f, 0f));
+                SetRef(enemy.GetComponent<EnemyAI>(), "player", player); // referencia al jugador de la escena
+            }
+        }
+
+        private static GameObject CreateEnemy(Mats m, Transform player)
+        {
+            var enemy = new GameObject("Enemy");
+
+            // CharacterController = collider + movimiento sin NavMesh
+            var cc = enemy.AddComponent<CharacterController>();
+            cc.height = 1.8f;
+            cc.radius = 0.35f;
+            cc.center = new Vector3(0f, 0.9f, 0f);
+            enemy.AddComponent<Health>();
+            var ai = enemy.AddComponent<EnemyAI>();
+
+            var body = Visual(PrimitiveType.Capsule, "Body", enemy.transform, new Vector3(0f, 0.9f, 0f), new Vector3(0.7f, 0.9f, 0.7f), m.enemy);
+            Visual(PrimitiveType.Cube, "Visor", body.transform, new Vector3(0f, 0.7f, 0.4f), new Vector3(0.6f, 0.15f, 0.25f), m.target);
+
+            var gun = new GameObject("Weapon").transform;
+            gun.SetParent(enemy.transform, false);
+            gun.localPosition = new Vector3(0.32f, 1.25f, 0.35f);
+            Visual(PrimitiveType.Cube, "Model", gun, new Vector3(0f, 0f, 0.15f), new Vector3(0.08f, 0.12f, 0.6f), m.weapon);
+            var muzzle = new GameObject("Muzzle").transform;
+            muzzle.SetParent(gun, false);
+            muzzle.localPosition = new Vector3(0f, 0.02f, 0.47f);
+
+            var flash = new GameObject("MuzzleFlash").AddComponent<Light>();
+            flash.transform.SetParent(muzzle, false);
+            flash.type = LightType.Point;
+            flash.range = 4f;
+            flash.intensity = 4f;
+            flash.color = new Color(1f, 0.5f, 0.3f);
+            flash.enabled = false;
+
+            var lr = gun.gameObject.AddComponent<LineRenderer>();
+            lr.sharedMaterial = m.enemyTracer;
+            lr.positionCount = 2;
+            lr.useWorldSpace = true;
+            lr.startWidth = 0.025f;
+            lr.endWidth = 0.01f;
+            lr.startColor = new Color(1f, 0.35f, 0.3f, 1f);
+            lr.endColor = new Color(1f, 0.35f, 0.3f, 0.2f);
+            lr.shadowCastingMode = ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+            lr.enabled = false;
+
+            SetRef(ai, "muzzle", muzzle);
+            SetRef(ai, "tracer", lr);
+            SetRef(ai, "muzzleFlash", flash);
+            return enemy;
+        }
+
+        // ==================================================================
         // HUD + controles táctiles  (=> prefab TPS_HUD)
         // ==================================================================
-        private static GameObject CreateHUD(RaycastWeapon weapon)
+        private static GameObject CreateHUD(RaycastWeapon weapon, PlayerHealth playerHealth)
         {
             var canvasGO = new GameObject("TPS_HUD");
             canvasGO.layer = LayerMask.NameToLayer("UI");
@@ -325,6 +406,17 @@ namespace TPSShooter.EditorTools
             MakeButton(mobile, "Btn_Reload", "RECARGAR", MobileAction.Reload, br, new Vector2(-230f, 460f), 115f, new Color(1f, 1f, 1f, 0.3f), knob, font, null, false);
             MakeButton(mobile, "Btn_Sprint", "CORRER", MobileAction.Sprint, Vector2.zero, new Vector2(230f, 480f), 115f, new Color(1f, 1f, 1f, 0.3f), knob, font, null, false);
 
+            // --- Flash rojo de daño (pantalla completa, no bloquea toques) ---
+            var flashImg = NoRaycast(Img("DamageFlash", root, center, Vector2.zero, Vector2.zero, new Color(0.8f, 0f, 0f, 0f)));
+            Stretch(flashImg.rectTransform, Vector2.zero, Vector2.one);
+
+            // --- Barra de vida (arriba a la izquierda) ---
+            var barBg = NoRaycast(Img("HealthBar", root, new Vector2(0f, 1f), new Vector2(220f, -95f), new Vector2(360f, 28f), new Color(0f, 0f, 0f, 0.5f)));
+            var barFill = NoRaycast(Img("Fill", barBg.transform, center, Vector2.zero, Vector2.zero, new Color(0.3f, 0.85f, 0.35f, 0.9f)));
+            Stretch(barFill.rectTransform, Vector2.zero, Vector2.one);
+            barFill.rectTransform.pivot = new Vector2(0f, 0.5f);
+            var healthText = Txt("HealthText", barBg.transform, center, Vector2.zero, new Vector2(360f, 28f), "100", 20, TextAnchor.MiddleCenter, font);
+
             // --- Mira ---
             var crosshair = Rect("Crosshair", root, center, Vector2.zero, new Vector2(40f, 40f));
             Color ch = new Color(1f, 1f, 1f, 0.9f);
@@ -356,6 +448,10 @@ namespace TPSShooter.EditorTools
             SetRef(hud, "ammoText", ammo);
             SetRef(hud, "reloadText", reload);
             SetRef(hud, "hitMarker", hmGroup);
+            SetRef(hud, "playerHealth", playerHealth);
+            SetRef(hud, "healthText", healthText);
+            SetRef(hud, "healthBarFill", barFill.rectTransform);
+            SetRef(hud, "damageFlash", flashImg);
 
             SetLayerRecursively(canvasGO, LayerMask.NameToLayer("UI"));
             return canvasGO;

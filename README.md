@@ -5,7 +5,9 @@ La base de un shooter 3D en tercera persona al estilo Free Fire. Incluye:
 - **Movimiento en tercera persona**: WASD o joystick virtual, correr, saltar (con *coyote time*), gravedad y rotación suave.
 - **Cámara sobre el hombro**: orbita alrededor del personaje, lo sigue con suavizado, hace zoom al apuntar y no atraviesa paredes.
 - **Disparo con raycast**: cargador y reserva de munición, recarga (manual y automática), dispersión, retroceso, trazador, fogonazo, impactos, daño y fuerza física.
-- **HUD**: munición, recarga, mira y marcador de impacto.
+- **Enemigos con IA** (`EnemyAI`): patrullan, te detectan con cono de visión y línea de visión, te persiguen, se giran hacia ti y te disparan.
+- **Vida del jugador** (`PlayerHealth`): 100 de vida, recibe los disparos de los bots y reinicia la escena al morir.
+- **HUD**: munición, recarga, mira, marcador de impacto, barra de vida y flash rojo al recibir daño.
 - **Controles táctiles**: joystick, zona para mover la cámara, y botones de disparar, apuntar, saltar, recargar y correr.
 - **Generador automático** de la escena de pruebas y de los prefabs.
 
@@ -20,7 +22,10 @@ Assets/_Project/
 ├── Scripts/
 │   ├── Player/
 │   │   ├── PlayerInputHandler.cs     ← Entrada unificada: teclado y ratón + táctil
-│   │   └── ThirdPersonController.cs  ← Movimiento con CharacterController
+│   │   ├── ThirdPersonController.cs  ← Movimiento con CharacterController
+│   │   └── PlayerHealth.cs           ← Vida del jugador y reinicio de escena
+│   ├── Enemies/
+│   │   └── EnemyAI.cs                ← Bot: patrulla, detección, persecución y disparo
 │   ├── Camera/
 │   │   └── ThirdPersonCamera.cs      ← Cámara orbital sobre el hombro
 │   ├── Weapons/
@@ -45,6 +50,7 @@ Al ejecutar el generador se crean también:
 Assets/_Project/Materials/            ← Materiales de prueba
 Assets/_Project/Prefabs/TPS_PlayerRig.prefab   ← Personaje + arma + cámara
 Assets/_Project/Prefabs/TPS_HUD.prefab         ← Canvas del HUD + controles táctiles
+Assets/_Project/Prefabs/TPS_Enemy.prefab       ← Bot enemigo listo para arrastrar a la escena
 Assets/_Project/Scenes/TPS_TestScene.unity     ← Escena de pruebas
 ```
 
@@ -83,6 +89,34 @@ Assets/_Project/Scenes/TPS_TestScene.unity     ← Escena de pruebas
 
 ---
 
+## Enemigos y vida: montarlo a mano
+
+El generador ya deja todo montado. Si quieres hacerlo en tu propia escena:
+
+**Jugador**
+1. Al objeto `Player` (el que tiene el `CharacterController`) añádele **PlayerHealth**.
+2. Comprueba que tenga la etiqueta (*Tag*) **Player**.
+3. Añade la escena a *File → Build Profiles* (o *Build Settings*) para que se pueda reiniciar en la build. En el Editor se reinicia aunque no esté añadida.
+
+**Bot enemigo**
+1. Crea un objeto vacío `Enemy` con el pivote a la altura de los pies, y ponle de hijo una cápsula como cuerpo **sin collider**.
+2. Añádele estos componentes:
+   - **CharacterController**: sirve de collider para recibir balas y para moverse sin NavMesh. Usa `Height 1.8`, `Center Y 0.9` y `Radius 0.35`.
+   - **Health**: su vida. Las balas del jugador le hacen daño.
+   - **EnemyAI**.
+3. En **EnemyAI**:
+   - **Player**: arrastra el objeto `Player` desde la jerarquía. Si lo dejas vacío, lo busca por la etiqueta `Player`.
+   - **Muzzle** (opcional): un objeto vacío en la punta del arma.
+   - **Tracer** y **Muzzle Flash** (opcionales): un `LineRenderer` y una `Light`.
+4. Selecciona el bot para ver sus rangos en la vista *Scene*: amarillo para detección, rojo para disparo y cian para la distancia preferida.
+
+**Opcional: navegación con NavMesh** (para que esquive obstáculos)
+1. Instala **AI Navigation** desde *Window → Package Manager*.
+2. Añade un objeto con **NavMesh Surface** y pulsa **Bake**.
+3. Añade un **NavMeshAgent** al bot. Si está sobre el NavMesh lo usa automáticamente; si no, se mueve con el CharacterController.
+
+**Capas:** el jugador está en `Ignore Raycast`. Por eso `Vision Mask` y `Hit Mask` del bot vienen en *Everything*. Si los cambias, deja incluida la capa del jugador o el bot no podrá verte ni darte.
+
 ## Cómo funciona
 
 - **Orden de ejecución.** `PlayerInputHandler` se ejecuta primero (`DefaultExecutionOrder(-100)`). Después, el controlador y el arma leen el input en `Update`, y la cámara en `LateUpdate`. Así todos usan el mismo input en cada frame.
@@ -113,5 +147,6 @@ Assets/_Project/Scenes/TPS_TestScene.unity     ← Escena de pruebas
 - Varias armas y cambio entre ellas (pasar los datos del arma a un `ScriptableObject`).
 - Agacharse, tumbarse y deslizarse.
 - Sonido y partículas usando los eventos del arma.
-- Enemigos con IA (NavMesh) que usen `Health`.
+- Oleadas de enemigos y un spawner.
+- Animaciones de los bots, y que dejen munición o botiquines (`PlayerHealth.Heal`, `RaycastWeapon.AddReserveAmmo`).
 - Multijugador (Netcode for GameObjects o Photon Fusion).
